@@ -1,0 +1,223 @@
+
+/* ==========================================
+   CHATTERBOX - PROFESSIONAL GROUP MEETING
+========================================== */
+
+.group-call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(3, 7, 18, 0.88);
+  backdrop-filter: blur(12px);
+}
+
+.group-call-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1440px, 100%);
+  height: min(920px, 94vh);
+  overflow: hidden;
+  background: #111827;
+  border: 1px solid #263244;
+  border-radius: 20px;
+  box-shadow: 0 25px 90px rgba(0, 0, 0, 0.45);
+}
+
+/* HEADER */
+
+.group-call-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 16px 22px;
+  background: #151e2d;
+  border-bottom: 1px solid #293548;
+  flex-shrink: 0;
+}
+
+.group-call-heading {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+}
+
+.group-call-heading-icon {
+  width: 43px;
+  height: 43px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: #b9aaff;
+  background: #302b55;
+  border-radius: 13px;
+}
+
+.group-call-header h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.group-call-header p {
+  margin: 5px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.group-call-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.group-call-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+}
+
+.group-call-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 10px;
+  background: #dc4545;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.group-call-close:hover {
+  background: #bd3030;
+}
+
+/* MEETING STAGE */
+
+.group-call-room {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #0b1220;
+}
+
+.group-call-room .lk-video-conference {
+  width: 100%;
+  height: 100%;
+  background: #0b1220;
+  color: #f8fafc;
+}
+
+/* PARTICIPANT GRID */
+
+.group-call-room .lk-grid-layout {
+  gap: 12px;
+  padding: 16px;
+}
+
+.group-call-room .lk-participant-tile {
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  background: #1e293b;
+}
+
+.group-call-room .lk-participant-name {
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.8);
+}
+
+/* BOTTOM MEETING CONTROLS */
+
+.group-call-room .lk-control-bar {
+  padding: 12px;
+  background: #151e2d;
+  border-top: 1px solid #293548;
+}
+
+.group-call-room .lk-button {
+  border-radius: 11px;
+}
+
+.group-call-room .lk-button:hover {
+  background: #334155;
+}
+
+/* MOBILE */
+
+@media (max-width: 600px) {
+  .group-call-overlay {
+    padding: 0;
+  }
+
+  .group-call-modal {
+    width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border: none;
+    border-radius: 0;
+  }
+
+  .group-call-header {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .group-call-heading {
+    gap: 9px;
+  }
+
+  .group-call-heading-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .group-call-header h2 {
+    font-size: 13px;
+  }
+
+  .group-call-header p {
+    font-size: 10px;
+  }
+
+  .group-call-header-actions {
+    gap: 7px;
+  }
+
+  .group-call-live {
+    padding: 6px 8px;
+    font-size: 9px;
+  }
+
+  .group-call-close {
+    padding: 9px;
+  }
+
+  .group-call-close span {
+    display: none;
+  }
+
+  .group-call-room .lk-grid-layout {
+    gap: 7px;
+    padding: 8px;
+  }
+}
