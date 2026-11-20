@@ -246,14 +246,14 @@ export function registerPrivateMessageHandlers(io, socket) {
       await savedMessage.populate([
         {
           path: "sender",
-          select: "_id username",
+          select: "_id username profilePicture",
         },
         {
           path: "replyTo",
           select: "_id text sender attachment",
           populate: {
             path: "sender",
-            select: "_id username",
+            select: "_id username profilePicture",
           },
         },
       ]);
@@ -273,6 +273,8 @@ export function registerPrivateMessageHandlers(io, socket) {
 
         text: savedMessage.text,
 
+        senderProfilePicture: savedMessage.sender?.profilePicture || "",
+
         attachment: savedMessage.attachment?.url
           ? savedMessage.attachment
           : null,
@@ -289,6 +291,9 @@ export function registerPrivateMessageHandlers(io, socket) {
 
               senderName:
                 savedMessage.replyTo.sender?.username || "User",
+
+              senderProfilePicture:
+                savedMessage.replyTo.sender?.profilePicture || "",
 
               text: savedMessage.replyTo.text,
 

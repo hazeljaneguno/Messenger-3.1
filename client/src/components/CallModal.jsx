@@ -9,8 +9,10 @@ import {
   VideoOff,
   UserRound,
 } from "lucide-react";
-import "./CallModal.css";
+
 import useCallSounds from "../hooks/useCallSounds";
+import "./CallModal.css";
+
 export default function CallModal({
   call,
   localStream,
@@ -32,67 +34,82 @@ export default function CallModal({
   const remoteAudioRef = useRef(null);
 
   const isVideo = call?.callType === "video";
-useCallSounds({
-  call,
-  isIncoming,
-  isOutgoing,
-  connectionState,
-});
-useEffect(() => {
-  const video = localVideoRef.current;
 
+  // ==========================================
+  // CALL SOUNDS
+  // ==========================================
+
+  useCallSounds({
+    call,
+    isIncoming,
+    isOutgoing,
+    connectionState,
+  });
+
+  // ==========================================
+  // LOCAL CAMERA
+  // ==========================================
+useEffect(() => {
+  if (!isVideo) return;
+
+  const video = localVideoRef.current;
   if (!video) return;
 
   video.srcObject = localStream || null;
 
-  if (localStream) {
-    console.log(
-      "YOUR CAMERA:",
-      localStream.getTracks().map((track) => ({
-        kind: track.kind,
-        enabled: track.enabled,
-        readyState: track.readyState,
-      }))
-    );
+  const videoTracks =
+    localStream?.getVideoTracks() || [];
 
+  console.log(
+    "LOCAL CAMERA TRACKS:",
+    videoTracks.map((track) => ({
+      enabled: track.enabled,
+      muted: track.muted,
+      readyState: track.readyState,
+    }))
+  );
+
+  if (videoTracks.length > 0) {
     video.play().catch((error) => {
-      console.warn("Local video playback:", error);
+      console.warn(
+        "Local camera preview failed:",
+        error
+      );
     });
   }
 
   return () => {
-    video.srcObject = null;
+    if (video.srcObject === localStream) {
+      video.srcObject = null;
+    }
   };
-}, [localStream,isVideo, isCameraOff]);
+}, [localStream, isVideo]);
+  // ==========================================
+  // REMOTE CAMERA AND AUDIO (VIDEO CALLS)
+  // ==========================================
 
- useEffect(() => {
-  const video = remoteVideoRef.current;
+  useEffect(() => {
+    const video = remoteVideoRef.current;
 
-  if (!video) return;
+    if (!video) return;
 
-  video.srcObject = remoteStream || null;
+    video.srcObject = remoteStream || null;
 
-  if (remoteStream) {
-    console.log(
-      "OTHER PERSON'S CAMERA:",
-      remoteStream.getTracks().map((track) => ({
-        kind: track.kind,
-        enabled: track.enabled,
-        readyState: track.readyState,
-      }))
-    );
+    if (remoteStream) {
+      video.play().catch((error) => {
+        console.warn("Remote video playback:", error);
+      });
+    }
 
-    video.play().catch((error) => {
-      console.warn("Remote video playback:", error);
-    });
-  }
+    return () => {
+      video.srcObject = null;
+    };
+  }, [remoteStream, isVideo]);
 
-  return () => {
-    video.srcObject = null;
-  };
-}, [remoteStream, isVideo]);
+  // ==========================================
+  // REMOTE AUDIO (VOICE CALLS)
+  // ==========================================
 
-  // Play the other person's audio during voice calls.
   useEffect(() => {
     const audio = remoteAudioRef.current;
 
@@ -107,15 +124,58 @@ useEffect(() => {
     }
 
     return () => {
-      if (audio) audio.srcObject = null;
+      audio.srcObject = null;
     };
-  }, [remoteStream]);
+  }, [remoteStream, isVideo]);
+
+  // ==========================================
+  // REMOTE CAMERA AVAILABILITY
+  // ==========================================
+
+  const hasRemoteVideo =
+    isVideo &&
+    Boolean(
+      remoteStream?.getVideoTracks().some(
+        (track) =>
+          track.readyState === "live" &&
+          track.enabled &&
+          !track.muted
+      )
+    );
+
+  // ==========================================
+  // CALL STATUS
+  // ==========================================
+
+  const callStatusText =
+    mediaError ||
+    (isIncoming
+      ? "Wants to connect with you"
+      : isOutgoing
+        ? "Waiting for an answer..."
+        : connectionState === "connected"
+          ? "Connected"
+          : connectionState === "disconnected" ||
+              connectionState === "failed"
+            ? "Call disconnected"
+            : "Connecting...");
 
   if (!call) return null;
 
   return (
     <div className="call-overlay">
-      <section className="call-modal">
+      <section
+        className="call-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={
+          isVideo ? "Video call" : "Voice call"
+        }
+      >
+        {/* ==================================
+            HEADER
+        ================================== */}
+
         <header className="call-modal-header">
           <span className="call-modal-label">
             {isIncoming
@@ -128,20 +188,34 @@ useEffect(() => {
           </span>
 
           <button
+            type="button"
             className="call-close-button"
-            onClick={isIncoming ? onDecline : onEnd}
-            aria-label={isIncoming ? "Decline call" : "End call"}
+            onClick={
+              isIncoming ? onDecline : onEnd
+            }
+            aria-label={
+              isIncoming
+                ? "Decline call"
+                : "End call"
+            }
           >
             <PhoneOff size={18} />
           </button>
         </header>
 
+        {/* ==================================
+            CALL MEDIA
+        ================================== */}
+
         <div
-          className={`call-media-area ${isVideo ? "video-call" : ""}`}
+          className={`call-media-area ${
+            isVideo ? "video-call" : ""
+          }`}
         >
           {isVideo ? (
             <>
-              {/* Other person's camera */}
+              {/* REMOTE VIDEO */}
+
               <video
                 ref={remoteVideoRef}
                 className="remote-video"
@@ -149,41 +223,54 @@ useEffect(() => {
                 playsInline
               />
 
-              {/* Show avatar while waiting for remote video */}
-              {!remoteStream?.getVideoTracks().some(
-                (track) => track.readyState === "live"
-              ) && (
+              {!hasRemoteVideo && (
                 <div className="call-avatar remote-avatar">
                   <UserRound size={48} />
-                  <span>Waiting for their camera...</span>
+                  <span>
+                    Waiting for their camera...
+                  </span>
                 </div>
               )}
 
-              {/* Your camera preview */}
-              {/* Your camera preview */}
-<div className="local-video-wrapper">
-  {localStream && !isCameraOff ? (
-    <video
-      ref={localVideoRef}
-      className="local-video"
-      autoPlay
-      muted
-      playsInline
-    />
-  ) : (
-    <div className="camera-off-overlay">
-      <UserRound size={24} />
-      <span>
-        {isCameraOff ? "Camera off" : "Camera unavailable"}
-      </span>
-    </div>
-  )}
+              {/* LOCAL VIDEO */}
 
-  <span className="local-video-label">You</span>
-</div>
+              <div className="local-video-wrapper">
+                <video
+                  ref={localVideoRef}
+                  className="local-video"
+                  autoPlay
+                  muted
+                  playsInline
+                  style={{
+                    visibility:
+                      localStream && !isCameraOff
+                        ? "visible"
+                        : "hidden",
+                  }}
+                />
+
+                {(!localStream ||
+                  isCameraOff) && (
+                  <div className="camera-off-overlay">
+                    <UserRound size={24} />
+
+                    <span>
+                      {isCameraOff
+                        ? "Camera off"
+                        : "Camera unavailable"}
+                    </span>
+                  </div>
+                )}
+
+                <span className="local-video-label">
+                  You
+                </span>
+              </div>
             </>
           ) : (
             <>
+              {/* REMOTE VOICE AUDIO */}
+
               <audio
                 ref={remoteAudioRef}
                 autoPlay
@@ -195,26 +282,31 @@ useEffect(() => {
             </>
           )}
 
-          <div className="call-person-info">
-            <h2>{call.displayName || "Chatterbox user"}</h2>
+          {/* ==================================
+              CALL INFORMATION
+          ================================== */}
 
-            <p>
-              {mediaError ||
-                (isIncoming
-                  ? "Wants to connect with you"
-                  : isOutgoing
-                    ? "Waiting for an answer..."
-                    : connectionState === "connected"
-                      ? "Connected"
-                      : "Connecting...")}
+          <div className="call-person-info">
+            <h2>
+              {call.displayName ||
+                "Chatterbox user"}
+            </h2>
+
+            <p role="status">
+              {callStatusText}
             </p>
           </div>
         </div>
+
+        {/* ==================================
+            CALL CONTROLS
+        ================================== */}
 
         <footer className="call-controls">
           {isIncoming ? (
             <>
               <button
+                type="button"
                 className="call-action decline"
                 onClick={onDecline}
                 aria-label="Decline call"
@@ -224,6 +316,7 @@ useEffect(() => {
               </button>
 
               <button
+                type="button"
                 className="call-action accept"
                 onClick={onAccept}
                 aria-label="Accept call"
@@ -236,37 +329,66 @@ useEffect(() => {
             <>
               {!isOutgoing && (
                 <>
+                  {/* MICROPHONE */}
+
                   <button
+                    type="button"
                     className={`call-action secondary ${
                       isMuted ? "active" : ""
                     }`}
                     onClick={onToggleMute}
-                    aria-label={isMuted ? "Unmute" : "Mute"}
+                    aria-label={
+                      isMuted ? "Unmute" : "Mute"
+                    }
                   >
-                    {isMuted ? <MicOff /> : <Mic />}
-                    <span>{isMuted ? "Unmute" : "Mute"}</span>
+                    {isMuted ? (
+                      <MicOff />
+                    ) : (
+                      <Mic />
+                    )}
+
+                    <span>
+                      {isMuted
+                        ? "Unmute"
+                        : "Mute"}
+                    </span>
                   </button>
+
+                  {/* CAMERA */}
 
                   {isVideo && (
                     <button
+                      type="button"
                       className={`call-action secondary ${
                         isCameraOff ? "active" : ""
                       }`}
                       onClick={onToggleCamera}
                       aria-label={
-                        isCameraOff ? "Turn camera on" : "Turn camera off"
+                        isCameraOff
+                          ? "Turn camera on"
+                          : "Turn camera off"
                       }
                     >
-                      {isCameraOff ? <VideoOff /> : <Video />}
+                      {isCameraOff ? (
+                        <VideoOff />
+                      ) : (
+                        <Video />
+                      )}
+
                       <span>
-                        {isCameraOff ? "Camera on" : "Camera off"}
+                        {isCameraOff
+                          ? "Camera on"
+                          : "Camera off"}
                       </span>
                     </button>
                   )}
                 </>
               )}
 
+              {/* END CALL */}
+
               <button
+                type="button"
                 className="call-action decline"
                 onClick={onEnd}
                 aria-label="End call"

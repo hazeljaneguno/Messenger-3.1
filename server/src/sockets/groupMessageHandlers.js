@@ -40,7 +40,7 @@ export function registerGroupMessageHandlers(io, socket) {
         typeof attachment.url === "string" &&
         attachment.url.startsWith("/uploads/") &&
         typeof attachment.originalName === "string" &&
-        typeof attachment.mimeType === "string" &&
+        typeof attachment.mimeType === "string" && 
         Number.isFinite(attachment.size) &&
         attachment.size >= 0;
 
@@ -121,14 +121,14 @@ export function registerGroupMessageHandlers(io, socket) {
       await savedMessage.populate([
         {
           path: "sender",
-          select: "_id username",
+          select: "_id username profilePicture",
         },
         {
           path: "replyTo",
           select: "_id text sender attachment",
           populate: {
             path: "sender",
-            select: "_id username",
+            select: "_id username profilePicture",
           },
         },
       ]);
@@ -142,7 +142,14 @@ export function registerGroupMessageHandlers(io, socket) {
         groupId: group._id.toString(),
         senderId: savedMessage.sender?._id?.toString(),
         senderName: savedMessage.sender?.username || "User",
+         
+        senderProfilePicture:
+          savedMessage.sender?.profilePicture || "",
+          
         text: savedMessage.text,
+
+        deliveredTo: [],
+        readBy: [],
 
         attachment: savedMessage.attachment?.url
           ? savedMessage.attachment
@@ -160,6 +167,8 @@ export function registerGroupMessageHandlers(io, socket) {
 
               senderName:
                 savedMessage.replyTo.sender?.username || "User",
+
+              senderProfilePicture: savedMessage.sender?.profilePicture || "",
 
               text: savedMessage.replyTo.text,
 

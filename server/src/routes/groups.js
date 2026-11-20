@@ -177,7 +177,7 @@ router.get("/:groupId/messages", requireAuth, async (req, res, next) => {
     const messages = await GroupMessage.find({
   group: group._id,
 })
-  .sort({ createdAt: 1 })
+  .sort({ createdAt: -1, _id: -1 })
   .limit(500)
   .populate("sender", "_id username")
   .populate({
@@ -194,6 +194,13 @@ res.json({
   messages: messages.map((message) => ({
     id: message._id.toString(),
     groupId: message.group?.toString() || group._id.toString(),
+
+    type: message.type ?? "text",
+    callId: message.callId ?? null,
+    callType: message.callType ?? null,
+    status: message.status ?? null,
+    startedAt: message.startedAt ?? null,
+    endedAt: message.endedAt ?? null,
 
     senderId: message.sender?._id?.toString() || null,
     senderName: message.sender?.username || "Deleted User",

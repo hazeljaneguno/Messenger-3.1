@@ -4,7 +4,7 @@ import Call from "../models/Call.js";
 import { getRoomService } from "../sockets/groupCall/groupCallHelpers.js";
 import { sendGroupCallNotification } from "./groupCallNotifications.js";
 import { sendCallState } from "../utils/sendCallState.js";
-
+import GroupMessage from "../models/GroupMessage.js";
 const lastReminder = new Map();
 export async function reconcileCalls(io) {
   const expired = await Call.find({ status: "ringing", expiresAt: { $lte: new Date() } });
@@ -30,8 +30,28 @@ export async function reconcileCalls(io) {
       io.to(`user:${item.user}`).emit("group-call:invitation:missed", data);
       io.to(`user:${call.host}`).emit("group-call:invitation:missed", data);
     }
+
     if (ended) { call.status = "ended"; call.endedAt = new Date(); }
     if (ended || missed.length) await call.save();
+    if (ended) {
+  await GroupMessage.updateOne(
+    {
+      group: call.group,
+      callId: String(call._id),
+      type: "group_call_ended",
+    },
+    {
+      $setOnInsert: {
+        sender: call.host,
+        callType: call.callType,
+        status: "ended",
+        startedAt: call.startedAt,
+        endedAt: call.endedAt,
+      },
+    },
+    { upsert: true, runValidators: true }
+  );
+}
     const remind = Date.now() - (lastReminder.get(String(call._id)) || 0) > 15 * 60 * 1000;
     const recipients = ended ? group.members : call.invitations.filter(i => i.status === "missed" && (remind || missed.includes(i))).map(i => i.user);
     if (recipients.length) lastReminder.set(String(call._id), Date.now());

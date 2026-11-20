@@ -1,4 +1,3 @@
-
 import { startCallMaintenance } from "./services/callMaintenance.js";
 import callActionRoutes from "./routes/callActions.js";
 import http from "node:http";
@@ -11,16 +10,8 @@ import { Server } from "socket.io";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// ==========================================
-// CONFIGURATION AND SERVICES
-// ==========================================
-
 import { config } from "./config.js";
 import { firebaseMessaging } from "./firebase.js";
-
-// ==========================================
-// API ROUTES
-// ==========================================
 
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
@@ -31,16 +22,8 @@ import groupCallRoutes from "./routes/groupCalls.js";
 import uploadRoutes from "./routes/uploads.js";
 import messageRoutes from "./routes/messages.js";
 
-// ==========================================
-// SOCKET.IO
-// ==========================================
-
 import { configureSocketAuth } from "./utils/socketAuth.js";
 import { registerSocketHandlers } from "./sockets/index.js";
-
-// ==========================================
-// APP INITIALIZATION
-// ==========================================
 
 const app = express();
 const server = http.createServer(app);
@@ -48,25 +31,17 @@ const server = http.createServer(app);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ==========================================
-// CORS CONFIGURATION
-// ==========================================
-
 const allowedOrigins = (config.clientUrl || "")
   .split(",")
   .map((origin) => origin.trim().replace(/\/+$/, ""))
   .filter(Boolean);
 
-console.log("Allowed frontend origins:", allowedOrigins);
-
 const corsOptions = {
   origin(origin, callback) {
-    // Allow requests without an Origin header.
+
     if (!origin || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-
-    console.error("Blocked CORS origin:", origin);
 
     return callback(
       new Error(`Origin is not allowed by CORS: ${origin}`)
@@ -94,10 +69,6 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// ==========================================
-// SECURITY
-// ==========================================
-
 app.use(
   helmet({
     crossOriginResourcePolicy: {
@@ -106,26 +77,14 @@ app.use(
   })
 );
 
-// ==========================================
-// STATIC FILES
-// ==========================================
-
 app.use(
   "/uploads",
   express.static(path.join(__dirname, "uploads"))
 );
 
-// ==========================================
-// BODY AND COOKIE MIDDLEWARE
-// ==========================================
-
 app.use(express.json({ limit: "20kb" }));
 
 app.use(cookieParser());
-
-// ==========================================
-// HEALTH CHECK
-// ==========================================
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -133,10 +92,6 @@ app.get("/api/health", (req, res) => {
     service: "chatterbox-api",
   });
 });
-
-// ==========================================
-// API ROUTES
-// ==========================================
 
 app.use("/api/settings", settingsRoutes);
 
@@ -155,10 +110,6 @@ app.use("/api/uploads", uploadRoutes);
 
 app.use("/api/messages", messageRoutes);
 
-// ==========================================
-// SOCKET.IO INITIALIZATION
-// ==========================================
-
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
@@ -173,74 +124,19 @@ const io = new Server(server, {
 
   connectTimeout: 45000,
 });
-
-// ==========================================
-// SOCKET.IO DIAGNOSTICS
-// ==========================================
-
-io.engine.on("connection_error", (error) => {
-  console.error("========== SOCKET.IO CONNECTION ERROR ==========");
-  console.error("Code:", error.code);
-  console.error("Message:", error.message);
-  console.error("Context:", error.context);
-  console.error("================================================");
-});
-
-io.on("connection", (socket) => {
-  console.log("Socket connected:", {
-    socketId: socket.id,
-    userId: socket.user?.id,
-    transport: socket.conn.transport.name,
-  });
-
-  socket.conn.on("upgrade", (transport) => {
-    console.log("Socket transport upgraded:", transport.name);
-  });
-
-  socket.on("disconnect", (reason) => {
-    console.log("Socket disconnected:", {
-      socketId: socket.id,
-      userId: socket.user?.id,
-      reason,
-    });
-  });
-});
-
-// Make Socket.IO available to Express routes.
+ 
 app.set("io", io);
-
-// ==========================================
-// FIREBASE
-// ==========================================
 
 app.set("firebaseMessaging", firebaseMessaging);
 
-// ==========================================
-// SOCKET AUTHENTICATION AND EVENT HANDLERS
-// ==========================================
-
-// Authentication must run before the connection handlers.
 configureSocketAuth(io);
 
-// Register private messaging, private calls,
-// group messaging, and group calls.
 registerSocketHandlers(io);
-
-// ==========================================
-// ERROR HANDLER
-// ==========================================
 
 app.use((error, req, res, next) => {
   if (res.headersSent) {
     return next(error);
   }
-
-  console.error("========== API ERROR ==========");
-  console.error("URL:", req.method, req.originalUrl);
-  console.error("MESSAGE:", error.message);
-  console.error("STACK:", error.stack);
-  console.error("===============================");
-
   if (
     error.message?.startsWith(
       "Origin is not allowed by CORS"
@@ -256,10 +152,6 @@ app.use((error, req, res, next) => {
   });
 });
 
-// ==========================================
-// START SERVER
-// ==========================================
-
 async function start() {
   try {
     if (!config.mongoUri) {
@@ -268,7 +160,6 @@ async function start() {
 
     await mongoose.connect(config.mongoUri);
 
-    console.log("Connected to MongoDB");
     startCallMaintenance(io);
 
     server.listen(config.port, () => {
@@ -276,16 +167,10 @@ async function start() {
         `Chatterbox API listening on port ${config.port}`
       );
 
-      console.log("Socket.IO is ready");
-
-      console.log(
-        "Group call handlers are registered"
-      );
     });
 
   } catch (error) {
-    console.error("Server failed to start:", error);
-
+    console.error("Chatterbox startup failed:", error);
     process.exit(1);
   }
 }

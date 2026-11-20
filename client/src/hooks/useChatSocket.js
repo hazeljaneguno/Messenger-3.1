@@ -1,3 +1,4 @@
+
 import { useEffect } from "react";
 
 export default function useChatSocket({
@@ -9,39 +10,59 @@ export default function useChatSocket({
   useEffect(() => {
     if (!socket) return;
 
-    // =====================================
-    // CONNECTION EVENTS
-    // =====================================
-
     function handleConnect() {
-      console.log("Socket connected");
+      console.log("Socket connected:", socket.id);
 
       setSocketStatus("connected");
       setError("");
     }
 
     function handleDisconnect(reason) {
-      console.log("Socket disconnected:", reason);
+      console.warn("Socket disconnected:", reason);
 
       setSocketStatus("disconnected");
+
+      // A temporary disconnect does not mean
+      // the user's login session has expired.
+      if (reason === "io server disconnect") {
+        console.warn(
+          "Server disconnected the chat socket."
+        );
+      }
     }
 
     function handleConnectError(error) {
-      console.error("Socket connection error:", error);
+      const message = String(error?.message || "");
+      const code = String(error?.data?.code || "");
+
+      console.error("SOCKET CONNECTION ERROR:", {
+        message,
+        code,
+        data: error?.data,
+        connected: socket.connected,
+      });
 
       setSocketStatus("disconnected");
 
-      setError(
-        error.message === "Authentication required" ||
-        error.message === "Invalid session"
-          ? "Your chat connection needs a fresh login. Please sign in again."
-          : "Cannot connect to chat server."
-      );
-    }
+      const authenticationFailed =
+        message === "Authentication required" ||
+        message === "Invalid session" ||
+        [
+          "TOKEN_EXPIRED",
+          "INVALID_TOKEN",
+          "UNAUTHORIZED",
+        ].includes(code);
 
-    // =====================================
-    // MENTION NOTIFICATIONS
-    // =====================================
+      if (authenticationFailed) {
+        setError(
+          "Your chat session could not be verified. Please sign in again."
+        );
+      } else {
+        setError(
+          "Chat connection interrupted. Please check your connection."
+        );
+      }
+    }
 
     function handleMentionNotification(notification) {
       console.log("Mention notification:", notification);
@@ -53,21 +74,15 @@ export default function useChatSocket({
       });
     }
 
-    // =====================================
-    // CALL EVENTS
-    // =====================================
-
     function handleMissedCall({ callId } = {}) {
       console.log("Call was not answered:", callId);
     }
 
     function handleCallEnded({ callId } = {}) {
       console.log("Call ended:", callId);
-    }
 
-    // =====================================
-    // REGISTER SOCKET LISTENERS
-    // =====================================
+      // Do not log out or disconnect Socket.IO here.
+    }
 
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
@@ -81,17 +96,9 @@ export default function useChatSocket({
     socket.on("call:missed", handleMissedCall);
     socket.on("call:ended", handleCallEnded);
 
-    // =====================================
-    // CHECK CURRENT CONNECTION
-    // =====================================
-
     if (socket.connected) {
       handleConnect();
     }
-
-    // =====================================
-    // CLEANUP LISTENERS
-    // =====================================
 
     return () => {
       socket.off("connect", handleConnect);

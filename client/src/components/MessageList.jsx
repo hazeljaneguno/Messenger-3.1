@@ -1,4 +1,3 @@
-
 import { useRef, useState } from "react";
 import {
   Check,
@@ -12,6 +11,11 @@ import {
   ZoomIn,
   MoreHorizontal,
   Trash2,
+  Video,
+  VideoOff,
+  Phone,
+  PhoneOff,
+  LoaderCircle,
 } from "lucide-react";
 
 import MentionText from "./MentionText";
@@ -71,6 +75,55 @@ function getReplyPreview(message) {
   return "Message";
 }
 
+const ACTIVE_CALL_STATUSES = new Set(["active", "ongoing", "in_progress"]);
+
+function normalizedId(value) {
+  if (value == null) return null;
+  if (typeof value === "object") return normalizedId(value._id ?? value.id);
+  return String(value);
+}
+
+function isCallMessage(message) {
+  return ["group_call", "group_call_started", "group_call_ended", "call_event"].includes(
+    message?.type ?? message?.messageType
+  );
+}
+
+function CallHistoryCard({ call, active, joining, onJoin, error }) {
+  const audio = call.callType === "audio";
+  const Icon = audio ? (active ? Phone : PhoneOff) : (active ? Video : VideoOff);
+  const startedAt = call.startedAt ?? call.createdAt;
+  const endedAt = call.endedAt;
+  const durationMs = startedAt && endedAt
+    ? new Date(endedAt).getTime() - new Date(startedAt).getTime()
+    : null;
+  const duration = durationMs != null && Number.isFinite(durationMs) && durationMs >= 0
+    ? `${Math.floor(durationMs / 60000)} min`
+    : null;
+
+  return (
+    <div className={`message-group-call ${active ? "is-active" : "is-ended"}`}>
+      <div className="message-group-call-heading">
+        <span className="message-group-call-icon"><Icon size={22} /></span>
+        <div className="message-group-call-text">
+          <strong>Group {audio ? "voice" : "video"} call {active ? "started" : "ended"}</strong>
+          {startedAt && <p>Started: {new Date(startedAt).toLocaleString()}</p>}
+          {!active && endedAt && <p>Ended: {new Date(endedAt).toLocaleString()}</p>}
+          {!active && duration && <p>Duration: {duration}</p>}
+          {active && <p>Call in progress</p>}
+        </div>
+      </div>
+      {active && onJoin && (
+        <button className="message-group-call-join" type="button" onClick={onJoin} disabled={joining}>
+          {joining ? <LoaderCircle size={18} className="message-call-spinner" /> : <Icon size={18} />}
+          {joining ? "Joining..." : `Join ${audio ? "Voice" : "Video"} Call`}
+        </button>
+      )}
+      {error && <p className="message-group-call-error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
 export default function MessageList({
   messages = [],
   user,
@@ -89,6 +142,8 @@ export default function MessageList({
   deleteMessage,
   mentionSuccessToast,
   setMentionSuccessToast,
+  activeGroupCall = null,
+  onJoinGroupCall,
 }) {
   const swipeStartRef = useRef(null);
   const messageRefs = useRef(new Map());
@@ -98,12 +153,43 @@ export default function MessageList({
   const [openMenuId, setOpenMenuId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 const [deleteType, setDeleteType] = useState("deleteForYou");
+  const [joiningCall, setJoiningCall] = useState(false);
+  const [joinCallError, setJoinCallError] = useState("");
+  const joiningCallRef = useRef(false);
+
+  const chatId = normalizedId(activeChat?._id ?? activeChat?.id);
+  const liveCallId = normalizedId(activeGroupCall?.callId ?? activeGroupCall?._id);
+  const hasLiveCall = Boolean(
+    isGroup && chatId && liveCallId &&
+    normalizedId(activeGroupCall?.groupId) === chatId &&
+    ACTIVE_CALL_STATUSES.has(String(activeGroupCall?.status ?? "").toLowerCase())
+  );
+  const callEvents = messages.filter(isCallMessage);
+  const liveCallHasMessage = callEvents.some(
+    (message) => normalizedId(message.callId) === liveCallId
+  );
+
+  async function joinCall() {
+    if (!hasLiveCall || joiningCallRef.current || !onJoinGroupCall) return;
+    joiningCallRef.current = true;
+    setJoiningCall(true);
+    setJoinCallError("");
+    try {
+      await onJoinGroupCall({ callId: liveCallId, groupId: chatId });
+    } catch (error) {
+      setJoinCallError(error?.message || "Could not join this call.");
+    } finally {
+      joiningCallRef.current = false;
+      setJoiningCall(false);
+    }
+  }
+
   const loggedInUserId =
     currentUserId ?? user?.id ?? user?._id ?? user?.userId;
 
   const messageMap = new Map(
     messages.map((message,index) => [
-      String(getMessageId(message)) || `message-${index}`,
+      getMessageId(message) != null ? String(getMessageId(message)) : `message-${index}`,
       message,
     ])
   );
@@ -238,8 +324,46 @@ const [deleteType, setDeleteType] = useState("deleteForYou");
   return (
     <>
       <div className="message-list">
+        {hasLiveCall && !liveCallHasMessage && (
+          <div className="message-call-event-row">
+            <CallHistoryCard
+              call={activeGroupCall}
+              active
+              joining={joiningCall}
+              onJoin={joinCall}
+              error={joinCallError}
+            />
+          </div>
+        )}
         {messages.map((message, index) => {
+          if (isCallMessage(message)) {
+            const eventCallId = normalizedId(message.callId);
+            const eventEnded = Boolean(message.endedAt) ||
+              ["ended", "completed", "cancelled", "canceled", "failed"].includes(
+                String(message.status ?? "").toLowerCase()
+              ) || message.type === "group_call_ended";
+            const active = !eventEnded && hasLiveCall && eventCallId === liveCallId;
+            return (
+              <div key={getMessageId(message) ?? `call-${eventCallId}-${index}`} className="message-call-event-row">
+                <CallHistoryCard
+                  call={{ ...message, ...(active ? activeGroupCall : {}), status: active ? "active" : "ended" }}
+                  active={active}
+                  joining={active && joiningCall}
+                  onJoin={active ? joinCall : undefined}
+                  error={active ? joinCallError : ""}
+                />
+              </div>
+            );
+          }
           const mine = isMine(message);
+          const senderName = getSenderDisplayName(message);
+          const senderInitial = senderName.trim().charAt(0).toUpperCase() || "?";
+          const photoPath = message.senderProfilePicture || message.sender?.profilePicture || "";
+
+          const senderPhotoUrl = photoPath.startsWith("/")
+          ? `${API_URL.replace(/\/+$/, "")}${photoPath}`
+          : /^https?:\/\//i.test(photoPath)
+          ? photoPath : "" ;
           const deleted = message.isDeleted === true;
          const rawMessageId = getMessageId(message);
 const messageId = rawMessageId != null
@@ -590,11 +714,27 @@ const messageId = rawMessageId != null
                   </div>
                 )}
               </div>
+              {!mine && (
+  <span className="message-sender-avatar" aria-hidden="true">
+    {senderInitial}
+    {senderPhotoUrl && (
+      <img
+        key={senderPhotoUrl}
+        src={senderPhotoUrl}
+        alt=""
+        loading="lazy"
+        onError={(event) => {
+          event.currentTarget.hidden = true;
+        }}
+      />
+    )}
+  </span>
+)}
             </div>
           );
         })}
 
-        {messages.length === 0 && (
+        {messages.length === 0 && !hasLiveCall && (
           <div className="message-empty-state">
             <div className="message-empty-icon">
               <ImageIcon size={24} />

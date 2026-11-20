@@ -1,12 +1,49 @@
 
 import { useEffect } from "react";
-import { MessageCircle, LoaderCircle } from "lucide-react";
+import {
+  MessageCircle,
+  LoaderCircle,
+} from "lucide-react";
+
 import MessageList from "./MessageList/MessageList.jsx";
 import "./ConversationBody.css";
 
+const ACTIVE_STATUSES = new Set([
+  "active",
+  "ongoing",
+  "in_progress",
+]);
+
+function normalizeId(value) {
+  if (value == null) return null;
+
+  if (typeof value === "object") {
+    return normalizeId(value._id ?? value.id);
+  }
+
+  return String(value);
+}
+
+function normalizeCall(call) {
+  if (!call) return null;
+
+  return {
+    ...call,
+    callId: normalizeId(
+      call.callId ?? call._id ?? call.id
+    ),
+    groupId: normalizeId(
+      call.groupId ?? call.group?.id ?? call.group?._id
+    ),
+    status: String(
+      call.status ?? "active"
+    ).toLowerCase(),
+  };
+}
+
 export default function ConversationBody({
   activeChat,
-  loadingMessages,
+  loadingMessages = false,
   user,
   onReply,
   deleteMessage,
@@ -21,16 +58,61 @@ export default function ConversationBody({
   bottomRef,
   mentionSuccessToast,
   setMentionSuccessToast,
+
+  // Group call states
+  activeGroupCall = null,
+  ongoingGroupCall = null,
+  onJoinGroupCall,
 }) {
-  // Keep hooks before conditional returns.
   useEffect(() => {
+    if (!activeChat || loadingMessages) return;
+
     bottomRef?.current?.scrollIntoView({
       behavior: "smooth",
       block: "end",
     });
-  }, [activeChat?.id, activeChat?.messages?.length, loadingMessages]);
+  }, [
+    activeChat?.id,
+    activeChat?._id,
+    activeChat?.messages?.length,
+    loadingMessages,
+    bottomRef,
+  ]);
 
   if (!activeChat) return null;
+
+  const messages = Array.isArray(activeChat.messages)
+    ? activeChat.messages
+    : [];
+
+  const isGroup =
+    activeChat.isGroup === true ||
+    activeChat.type === "group";
+
+  const chatId = normalizeId(
+    activeChat._id ?? activeChat.id
+  );
+
+  const connectedCall = normalizeCall(activeGroupCall);
+  const availableCall = normalizeCall(ongoingGroupCall);
+
+  // Prefer the call that is already connected.
+  // Otherwise show the ongoing call that members can join.
+  const callCandidates = [
+    connectedCall,
+    availableCall,
+  ];
+
+  const visibleGroupCall = isGroup
+    ? callCandidates.find(
+        (call) =>
+          call?.callId &&
+          call?.groupId === chatId &&
+          ACTIVE_STATUSES.has(call.status)
+      ) ?? null
+    : null;
+
+  const hasActiveGroupCall = Boolean(visibleGroupCall);
 
   return (
     <div
@@ -45,34 +127,54 @@ export default function ConversationBody({
       </div>
 
       {loadingMessages && (
-        <div className="loading-messages">
-          <LoaderCircle className="spin" size={18} />
-          Loading conversation...
+        <div
+          className="loading-messages"
+          role="status"
+          aria-live="polite"
+        >
+          <LoaderCircle
+            className="spin"
+            size={18}
+          />
+
+          <span>
+            Loading conversation...
+          </span>
         </div>
       )}
 
-      {!loadingMessages && (activeChat.messages || []).length === 0 && (
-        <div className="welcome-state">
-          <div className="welcome-icon">
-            <MessageCircle size={27} />
+      {!loadingMessages &&
+        messages.length === 0 &&
+        !hasActiveGroupCall && (
+          <div className="welcome-state">
+            <div className="welcome-icon">
+              <MessageCircle size={27} />
+            </div>
+
+            <h3>
+              Say hello to{" "}
+              {activeChat.username ||
+                activeChat.name ||
+                "your friends"}
+            </h3>
+
+            <p>
+              Your conversation starts here.
+              Send the first message!
+            </p>
           </div>
-
-          <h3>
-            Say hello to {activeChat.username || activeChat.name}
-          </h3>
-
-          <p>
-            Your conversation starts here. Send the first message!
-          </p>
-        </div>
-      )}
+        )}
 
       <MessageList
-        messages={activeChat.messages || []}
+        messages={messages}
         user={user}
-        currentUserId={user?.id ?? user?._id}
+        currentUserId={
+          user?.id ??
+          user?._id ??
+          user?.userId
+        }
         activeChat={activeChat}
-        isGroup={Boolean(activeChat.isGroup)}
+        isGroup={isGroup}
         onReply={onReply}
         deleteMessage={deleteMessage}
         editingMessageId={editingMessageId}
@@ -85,9 +187,15 @@ export default function ConversationBody({
         removeImage={removeImage}
         mentionSuccessToast={mentionSuccessToast}
         setMentionSuccessToast={setMentionSuccessToast}
+        activeGroupCall={visibleGroupCall}
+        onJoinGroupCall={onJoinGroupCall}
       />
 
-      <div ref={bottomRef} />
+      <div
+        ref={bottomRef}
+        className="conversation-bottom-anchor"
+        aria-hidden="true"
+      />
     </div>
   );
 }

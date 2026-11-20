@@ -27,6 +27,10 @@ const userSchema = new mongoose.Schema(
       maxlength: 254,
     },
     
+profilePicture: {
+  type: String,
+  default: "",
+},
     // Firebase Cloud Messaging device tokens
     fcmTokens: [
       {

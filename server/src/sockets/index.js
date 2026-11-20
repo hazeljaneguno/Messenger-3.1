@@ -1,4 +1,3 @@
-
 import { registerGroupMessageHandlers } from "./groupMessageHandlers.js";
 import { registerGroupMessageEdit } from "./groupMessageEdit.js";
 import { registerGroupMessageDelete } from "./groupMessageDelete.js";
@@ -12,11 +11,11 @@ import { registerCallHandlers } from "./callHandlers.js";
 import { registerPresenceHandlers } from "./presenceHandlers.js";
 import { registerGroupCallHandlers } from "./groupCallHandlers.js";
 
+import { registerMessageReceiptHandlers } from "./messageReceiptHandlers.js";
+
 export function registerSocketHandlers(io) {
   io.on("connection", (socket) => {
     const userId = String(socket.user.id);
-
-    console.log("User connected:", socket.id);
 
     // Every authenticated user joins their personal room.
     socket.join(`user:${userId}`);
@@ -55,6 +54,12 @@ export function registerSocketHandlers(io) {
     registerGroupMessageEdit(io, socket);
     registerGroupMessageDelete(io, socket);
     registerGroupAttachmentHandlers(io, socket);
+
+    // =====================================
+    // MESSAGE RECEIPTS
+    // =====================================
+
+    registerMessageReceiptHandlers(io, socket);
 
     // =====================================
     // DISCONNECT

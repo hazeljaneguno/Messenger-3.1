@@ -1,5 +1,21 @@
 import mongoose from "mongoose";
 
+const receiptSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    at: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
+
 const groupMessageSchema = new mongoose.Schema(
   {
     group: {
@@ -39,6 +55,50 @@ const groupMessageSchema = new mongoose.Schema(
       ref: "GroupMessage",
       default: null,
     },
+    type: {
+      type: String,
+      enum: [
+        "text",
+        "group_call",
+        "group_call_started",
+        "group_call_ended",
+      ],
+      default: "text",
+    },
+
+    callId: {
+      type: String,
+      default: null,
+    },
+
+    callType: {
+      type: String,
+      enum: ["audio", "video"],
+      default: null,
+    },
+
+    status: {
+      type: String,
+      enum: [
+        "active",
+        "ongoing",
+        "in_progress",
+        "ended",
+        "completed",
+        "cancelled",
+        "failed",
+      ],
+    },
+
+    startedAt: {
+      type: Date,
+      default: null,
+    },
+
+    endedAt: {
+      type: Date,
+      default: null,
+    },
 
     text: {
       type: String,
@@ -52,6 +112,7 @@ const groupMessageSchema = new mongoose.Schema(
         type: String,
         default: "",
       },
+
       originalName: {
         type: String,
         trim: true,
@@ -67,15 +128,36 @@ const groupMessageSchema = new mongoose.Schema(
         min: 0,
         default: 0,
       },
+     
     },
-  },
+
+   deliveredTo: {
+        type: [receiptSchema],
+        default: [],
+      },
+    readBy: {
+        type: [receiptSchema],
+        default: [],
+      },
+    },
   { timestamps: true }
 );
 
-// Require text or an attachment unless the message is deleted.
-groupMessageSchema.pre("validate", function () {
-  // Deleted messages are allowed to have empty content.
+  groupMessageSchema.pre("validate", function () {
   if (this.isDeleted) return;
+
+  const isCallEvent = [
+    "group_call",
+    "group_call_started",
+    "group_call_ended",
+  ].includes(this.type);
+
+  if (isCallEvent) {
+    if (!this.callId?.trim()) {
+      this.invalidate("callId", "A call event must have a call ID.");
+    }
+    return;
+  }
 
   const hasText = Boolean(this.text?.trim());
   const hasAttachment = Boolean(this.attachment?.url);
@@ -87,4 +169,13 @@ groupMessageSchema.pre("validate", function () {
     );
   }
 });
+
+groupMessageSchema.index(
+  { group: 1, callId: 1, type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { type: "group_call_ended" },
+  }
+);
+
 export default mongoose.model("GroupMessage", groupMessageSchema);

@@ -17,18 +17,24 @@ import { api } from "../api.js";
 // LIVEKIT ROOM CLEANUP
 // ==========================================
 
-function disconnectRoom(room) {
+
+async function disconnectRoom(room) {
   if (!room) return;
 
-  room.removeAllListeners();
+  try {
+    room.removeAllListeners();
 
-  void room.disconnect().catch((error) => {
+    // Wait until LiveKit completely disconnects.
+    await room.disconnect();
+
+    console.log("LiveKit room disconnected successfully.");
+  } catch (error) {
     console.error("LiveKit disconnect error:", {
       name: error?.name,
       message: error?.message,
       stack: error?.stack,
     });
-  });
+  }
 }
 
 // ==========================================
@@ -52,7 +58,8 @@ export default function useGroupCall() {
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [error, setError] = useState("");
-
+  
+  const cleanupPromiseRef = useRef(Promise.resolve());
   // ==========================================
   // UPDATE REMOTE PARTICIPANTS
   // ==========================================
@@ -88,6 +95,12 @@ export default function useGroupCall() {
       }
 
       joiningRef.current = true;
+
+      try{
+        await cleanupPromiseRef.current;
+      } catch {
+        console.error("Previous room cleanup failed:, error");
+      }
 
       const attemptId = ++joinAttemptRef.current;
 
@@ -338,29 +351,33 @@ export default function useGroupCall() {
   // LEAVE A GROUP CALL
   // ==========================================
 
-  const leaveGroupCall = useCallback(() => {
-    // Cancel any pending join attempt.
-    joinAttemptRef.current += 1;
+const leaveGroupCall = useCallback(async () => {
+  // Cancel pending joins.
+  joinAttemptRef.current += 1;
+  joiningRef.current = false;
 
-    joiningRef.current = false;
+  const currentRoom = roomRef.current;
+  roomRef.current = null;
 
-    const currentRoom = roomRef.current;
+  const previousCleanup = cleanupPromiseRef.current;
 
-    roomRef.current = null;
+  const cleanup = previousCleanup
+    .catch(() => {})
+    .then(() => disconnectRoom(currentRoom));
 
-    if (currentRoom) {
-      disconnectRoom(currentRoom);
-    }
+  cleanupPromiseRef.current = cleanup;
 
-    if (!mountedRef.current) return;
-
+  if (mountedRef.current) {
     setRoom(null);
     setParticipants([]);
     setConnectionState("disconnected");
     setIsMuted(false);
     setIsCameraOff(false);
     setError("");
-  }, []);
+  }
+
+  await cleanup;
+}, []);
 
   // ==========================================
   // TOGGLE MICROPHONE

@@ -1,4 +1,3 @@
-
 import {
   Check,
   CheckCheck,
@@ -10,6 +9,8 @@ import {
 } from "lucide-react";
 
 import MentionText from "../MentionText";
+
+import "./MessageBubble.css";
 
 import MessageActions from "./MessageActions";
 import MessageDeleteConfirm from "./MessageDeleteConfirm";
@@ -25,6 +26,7 @@ export default function MessageBubble({
   message,
   mine,
   user,
+  isGroup = false,
   loggedInUserId,
   messageTime,
   replyTarget,
@@ -73,19 +75,17 @@ export default function MessageBubble({
 
   return (
     <div className="message-content">
-      {(!mine || message.isGroup) && (
-        <div className="message-heading">
-          <span className="sender-name">
-            {getSenderDisplayName()}
-          </span>
+      {isGroup && !mine && (
+  <div className="message-heading">
+    <span className="sender-name">
+      {getSenderDisplayName()}
+    </span>
 
-          {!mine && (
-            <span className="message-time">
-              {messageTime}
-            </span>
-          )}
-        </div>
-      )}
+    <span className="message-time">
+      {messageTime}
+    </span>
+  </div>
+)}
 
       <div className="message-bubble-wrap">
         <div

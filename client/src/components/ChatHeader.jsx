@@ -1,14 +1,11 @@
 
 import "./ChatHeader.css";
-import { useState } from "react";
 
 import {
   ArrowLeft,
-  MoreHorizontal,
+  Info,
   Phone,
   Video,
-  Palette,
-  Trash2,
   Mail,
 } from "lucide-react";
 
@@ -19,8 +16,6 @@ export default function ChatHeader({
   onlineIds,
   setMobileChatOpen,
   showNotice,
-  handleDeleteGroup,
-  onOpenBackgroundPicker,
   onStartCall,
   onStartGroupCall,
   onJoinGroupCall,
@@ -29,9 +24,8 @@ export default function ChatHeader({
   groupCallStatus,
   messageRequestCount = 0,
   setShowMessageRequests,
+  onOpenChatDetails,
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-
   if (!activeChat) return null;
 
   const isGroup = Boolean(activeChat.isGroup);
@@ -39,22 +33,12 @@ export default function ChatHeader({
   const isOnline =
     onlineIds?.has(String(activeChat.id)) ?? false;
 
-  const hasOngoingGroupCall =
+  const hasOngoingGroupCall = Boolean(
     isGroup &&
     ongoingGroupCall &&
-    String(ongoingGroupCall.groupId) === String(activeChat.id);
-
-  // CHANGE CHAT BACKGROUND
-  const handleBackgroundClick = () => {
-    setMenuOpen(false);
-    onOpenBackgroundPicker?.(activeChat);
-  };
-
-  // DELETE GROUP
-  const handleDeleteClick = () => {
-    setMenuOpen(false);
-    handleDeleteGroup?.(activeChat);
-  };
+    String(ongoingGroupCall.groupId) ===
+      String(activeChat.id)
+  );
 
   // START OR JOIN VOICE / VIDEO CALL
   const handleCallClick = (callType) => {
@@ -62,7 +46,9 @@ export default function ChatHeader({
       // JOIN EXISTING GROUP CALL
       if (hasOngoingGroupCall) {
         if (!onJoinGroupCall) {
-          showNotice("Joining the group call is not connected yet.");
+          showNotice?.(
+            "Joining the group call is not connected yet."
+          );
           return;
         }
 
@@ -72,7 +58,9 @@ export default function ChatHeader({
 
       // START NEW GROUP CALL
       if (!onStartGroupCall) {
-        showNotice("Group calling is not connected yet.");
+        showNotice?.(
+          "Group calling is not connected yet."
+        );
         return;
       }
 
@@ -81,23 +69,36 @@ export default function ChatHeader({
     }
 
     // PRIVATE CALL — EXISTING WEBRTC
-
     if (!onStartCall) {
-      showNotice("Calling is not connected yet.");
+      showNotice?.("Calling is not connected yet.");
       return;
     }
 
     onStartCall(activeChat, callType);
   };
 
-  // MESSAGE REQUESTS
+  // OPEN MESSAGE REQUESTS
   const handleMessageRequestsClick = () => {
     setShowMessageRequests?.(true);
   };
 
+  // OPEN CHAT INFORMATION
+  const handleInformationClick = () => {
+    if (!onOpenChatDetails) {
+      showNotice?.(
+        "Chat information is not connected yet."
+      );
+      return;
+    }
+
+    onOpenChatDetails(activeChat);
+  };
+
   return (
     <header className="chat-header">
+      {/* BACK TO CONVERSATIONS */}
       <button
+        type="button"
         className="icon-button mobile-back"
         aria-label="Back to people"
         onClick={() => setMobileChatOpen(false)}
@@ -105,12 +106,14 @@ export default function ChatHeader({
         <ArrowLeft size={20} />
       </button>
 
+      {/* CONTACT AVATAR */}
       <Avatar
         name={activeChat.username || activeChat.name}
         online={!isGroup && isOnline}
         small
       />
 
+      {/* CONTACT NAME AND STATUS */}
       <div className="chat-header-copy">
         <h2>
           {isGroup
@@ -122,15 +125,19 @@ export default function ChatHeader({
           {isGroup
             ? `${activeChat.members?.length || 0} members`
             : isOnline
-              ? <><i /> Online now</>
+              ? (
+                <>
+                  <i /> Online now
+                </>
+              )
               : "Messages are private to this conversation"}
         </p>
       </div>
 
       <div className="header-actions">
-
         {/* MESSAGE REQUESTS */}
         <button
+          type="button"
           className="icon-button message-requests-button"
           aria-label={`Message requests${
             messageRequestCount > 0
@@ -153,6 +160,7 @@ export default function ChatHeader({
 
         {/* VOICE CALL */}
         <button
+          type="button"
           className="icon-button"
           aria-label={
             isGroup
@@ -170,14 +178,14 @@ export default function ChatHeader({
           }
           disabled={
             isGroup
-  ? [
-      "Checking group call...",
-      "Starting group call...",
-      "Connecting...",
-      "Accepting invitation...",
-      "Connected",
-    ].includes(groupCallStatus)
-  : !isOnline || Boolean(callStatus)
+              ? [
+                  "Checking group call...",
+                  "Starting group call...",
+                  "Connecting...",
+                  "Accepting invitation...",
+                  "Connected",
+                ].includes(groupCallStatus)
+              : !isOnline || Boolean(callStatus)
           }
           onClick={() => handleCallClick("audio")}
         >
@@ -186,6 +194,7 @@ export default function ChatHeader({
 
         {/* VIDEO CALL */}
         <button
+          type="button"
           className="icon-button"
           aria-label={
             isGroup
@@ -213,39 +222,24 @@ export default function ChatHeader({
 
         <span className="action-divider" />
 
-        {/* CONVERSATION OPTIONS */}
-        <div className="chat-options">
-          <button
-            className="icon-button"
-            aria-label="Conversation options"
-            aria-expanded={menuOpen}
-            onClick={() =>
-              setMenuOpen((previous) => !previous)
-            }
-          >
-            <MoreHorizontal size={21} />
-          </button>
-
-          {menuOpen && (
-            <div className="chat-options-menu">
-              <button onClick={handleBackgroundClick}>
-                <Palette size={17} />
-                <span>Change background</span>
-              </button>
-
-              {isGroup && (
-                <button
-                  className="danger-option"
-                  onClick={handleDeleteClick}
-                >
-                  <Trash2 size={17} />
-                  <span>Delete group</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
+        {/* INFORMATION BUTTON */}
+        <button
+          type="button"
+          className="icon-button chat-info-button"
+          aria-label={
+            isGroup
+              ? "Open group information"
+              : "Open chat information"
+          }
+          title={
+            isGroup
+              ? "Group information"
+              : "Chat information"
+          }
+          onClick={handleInformationClick}
+        >
+          <Info size={21} />
+        </button>
       </div>
     </header>
   );

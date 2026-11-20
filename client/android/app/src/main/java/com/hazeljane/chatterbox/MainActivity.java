@@ -1,52 +1,83 @@
 package com.hazeljane.chatterbox;
 
-import android.os.Bundle;
-import android.webkit.WebView;
-import android.os.Build;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.media.AudioAttributes;
-import android.net.Uri;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.media.AudioAttributes;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
 import android.util.Log;
+import android.webkit.WebView;
 
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.JSObject;
+import com.google.firebase.FirebaseApp;
 
 public class MainActivity extends BridgeActivity {
+
+    private static final String TAG = "ChatterboxCalls";
+    private static final String FIREBASE_TAG = "ChatterboxFirebase";
 
     private static final String EVENT_INCOMING_CALL =
             "chatterboxIncomingCallAction";
 
-    private static final String TAG = "ChatterboxCalls";
+    private static final String MESSAGE_CHANNEL_ID =
+            "chatterbox_messages";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
 
-        // Register the custom Capacitor plugin before initializing the bridge.
+        // Register the custom plugin before Capacitor starts.
+        // Remove this line if IncomingCallBridge is already
+        // registered automatically elsewhere.
         registerPlugin(IncomingCallBridge.class);
 
         super.onCreate(savedInstanceState);
 
-        // Enable WebView debugging during development only.
-        WebView.setWebContentsDebuggingEnabled((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
+        boolean isDebuggable =
+                (getApplicationInfo().flags
+                        & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
 
+        WebView.setWebContentsDebuggingEnabled(isDebuggable);
+
+        // Check Firebase configuration.
+        FirebaseApp firebaseApp = FirebaseApp.initializeApp(this);
+
+        if (firebaseApp != null) {
+            Log.d(
+                    FIREBASE_TAG,
+                    "Firebase initialized successfully."
+            );
+        } else {
+            Log.e(
+                    FIREBASE_TAG,
+                    "Firebase initialization failed. "
+                            + "Check google-services.json and Gradle."
+            );
+        }
+
+        // Create notification channels.
         createNotificationChannel();
         IncomingCallNotifications.createChannel(this);
 
-        // Handle Answer, Decline, or Open when Android creates the activity.
+        // Recover notification action when launched from a call.
         handleIncomingCallIntent(getIntent());
+
+        Log.d(TAG, "MainActivity initialized successfully.");
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
-
         super.onNewIntent(intent);
 
-        setIntent(intent);
+        if (intent == null) {
+            return;
+        }
 
-        // Handle notification actions when the activity already exists.
+        setIntent(intent);
         handleIncomingCallIntent(intent);
     }
 
@@ -64,113 +95,200 @@ public class MainActivity extends BridgeActivity {
                 IncomingCallNotifications.EXTRA_CALL_ID
         );
 
-        if (action == null ||
-                callId == null ||
-                callId.trim().isEmpty()) {
+        if (action == null || action.trim().isEmpty()
+                || callId == null || callId.trim().isEmpty()) {
             return;
         }
 
-        String callerName = intent.getStringExtra(
-                IncomingCallNotifications.EXTRA_CALLER_NAME
-        );
-
-        String callType = intent.getStringExtra(
-                IncomingCallNotifications.EXTRA_CALL_TYPE
-        );
-
         try {
+            String callerName = intent.getStringExtra(
+                    IncomingCallNotifications.EXTRA_CALLER_NAME
+            );
 
-            // Build the action data.
+            String callType = intent.getStringExtra(
+                    IncomingCallNotifications.EXTRA_CALL_TYPE
+            );
+
+            String type = intent.getStringExtra("type");
+            String groupId = intent.getStringExtra("groupId");
+            String groupName = intent.getStringExtra("groupName");
+
             JSObject data = new JSObject();
 
-            data.put("type", intent.getStringExtra("type") == null ? "incoming_call" : intent.getStringExtra("type"));
-            data.put("groupId", intent.getStringExtra("groupId"));
-            data.put("groupName", intent.getStringExtra("groupName"));
+            data.put(
+                    "type",
+                    type == null || type.isEmpty()
+                            ? "incoming_call"
+                            : type
+            );
+
             data.put("action", action);
             data.put("callId", callId);
+            data.put("groupId", groupId);
+            data.put("groupName", groupName);
+
             data.put(
                     "callerName",
-                    callerName == null ? "Someone" : callerName
+                    callerName == null || callerName.isEmpty()
+                            ? "Someone"
+                            : callerName
             );
+
             data.put(
                     "callType",
-                    callType == null ? "audio" : callType
+                    callType == null || callType.isEmpty()
+                            ? "audio"
+                            : callType
             );
 
-            // IMPORTANT:
-            // Save the action before notifying JavaScript.
-            // This protects cold-start notification actions.
+            // Save the action first, so it survives a cold start.
             IncomingCallBridge.savePendingAction(this, data);
 
-            // Forward the action to the React application.
-            getBridge().triggerWindowJSEvent(
-                    EVENT_INCOMING_CALL,
-                    data.toString()
-            );
+            Log.d(TAG, "Incoming call action saved: " + action);
 
-            // Dismiss the Android notification after saving the action.
+            // Dispatch when the bridge exists.
+            // React must also read the saved pending action,
+            // because its event listener might not be ready yet.
+            if (getBridge() != null) {
+                getBridge().triggerWindowJSEvent(
+                        EVENT_INCOMING_CALL,
+                        data.toString()
+                );
+
+                Log.d(TAG, "Incoming call event dispatched.");
+            } else {
+                Log.d(
+                        TAG,
+                        "Bridge not ready; action saved for recovery."
+                );
+            }
+
+            // Dismiss notification after saving the action.
             IncomingCallNotifications.dismiss(this, callId);
 
-            // Remove the extras only after the action was saved.
+            // Prevent processing the same intent again.
             intent.removeExtra(
                     IncomingCallNotifications.EXTRA_CALL_ACTION
             );
-
             intent.removeExtra(
                     IncomingCallNotifications.EXTRA_CALL_ID
             );
 
         } catch (Exception exception) {
-
             Log.e(
                     TAG,
                     "Unable to process incoming call action",
                     exception
             );
-
-            // Keep the original intent extras if processing fails.
         }
     }
 
     private void createNotificationChannel() {
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-
-            String channelId = "chatterbox_messages";
-
-            NotificationManager notificationManager =
-                    (NotificationManager) getSystemService(
-                            Context.NOTIFICATION_SERVICE
-                    );
-
-            Uri soundUri = Uri.parse(
-                    "android.resource://" +
-                    getPackageName() +
-                    "/" +
-                    R.raw.chatterbox_notification
-            );
-
-            AudioAttributes audioAttributes =
-                    new AudioAttributes.Builder()
-                            .setUsage(
-                                    AudioAttributes.USAGE_NOTIFICATION
-                            )
-                            .build();
-
-            NotificationChannel channel =
-                    new NotificationChannel(
-                            channelId,
-                            "Chatterbox Messages",
-                            NotificationManager.IMPORTANCE_HIGH
-                    );
-
-            channel.setDescription(
-                    "New chat message notifications"
-            );
-
-            channel.setSound(soundUri, audioAttributes);
-
-            notificationManager.createNotificationChannel(channel);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
         }
+
+        NotificationManager notificationManager =
+                (NotificationManager) getSystemService(
+                        Context.NOTIFICATION_SERVICE
+                );
+
+        if (notificationManager == null) {
+            Log.e(TAG, "NotificationManager unavailable.");
+            return;
+        }
+
+        // Preserve an existing notification channel.
+        NotificationChannel existingChannel =
+                notificationManager.getNotificationChannel(
+                        MESSAGE_CHANNEL_ID
+                );
+
+        if (existingChannel != null) {
+            Log.d(TAG, "Message notification channel already exists.");
+            return;
+        }
+
+        Uri soundUri = Uri.parse(
+                "android.resource://"
+                        + getPackageName()
+                        + "/"
+                        + R.raw.chatterbox_notification
+        );
+
+        AudioAttributes audioAttributes =
+                new AudioAttributes.Builder()
+                        .setUsage(
+                                AudioAttributes.USAGE_NOTIFICATION
+                        )
+                        .build();
+
+        NotificationChannel channel =
+                new NotificationChannel(
+                        MESSAGE_CHANNEL_ID,
+                        "Chatterbox Messages",
+                        NotificationManager.IMPORTANCE_HIGH
+                );
+
+        channel.setDescription(
+                "New chat message notifications"
+        );
+
+        channel.setSound(
+                soundUri,
+                audioAttributes
+        );
+
+        notificationManager.createNotificationChannel(channel);
+
+        Log.d(TAG, "Message notification channel created.");
     }
+
+    private void createBubbleNotificationChannel() {
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+
+        NotificationManager manager =
+                (NotificationManager) getSystemService(
+                        Context.NOTIFICATION_SERVICE
+                );
+
+        if (manager == null) {
+            Log.e(TAG, "NotificationManager unavailable.");
+            return;
+        }
+
+        String channelId = "chatterbox_conversations";
+
+        NotificationChannel existing =
+                manager.getNotificationChannel(channelId);
+
+        if (existing != null) {
+            Log.d(TAG, "Conversation channel already exists.");
+            return;
+        }
+
+        NotificationChannel channel =
+                new NotificationChannel(
+                        channelId,
+                        "Chatterbox Conversations",
+                        NotificationManager.IMPORTANCE_HIGH
+                );
+
+        channel.setDescription(
+                "Private and group chat conversation notifications"
+        );
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            channel.setAllowBubbles(true);
+        }
+
+        manager.createNotificationChannel(channel);
+
+        Log.d(TAG, "Conversation notification channel created.");
+    }
+
 }

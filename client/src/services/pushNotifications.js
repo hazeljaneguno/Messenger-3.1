@@ -1,13 +1,7 @@
-
 import { PushNotifications } from "@capacitor/push-notifications";
-import { Capacitor, registerPlugin } from "@capacitor/core";
-const IncomingCallBridge = registerPlugin("IncomingCallBridge");
-
-import { api } from "../api";
-
-// ==========================================
-// STATE
-// ==========================================
+import { Capacitor } from "@capacitor/core";
+import { api } from "../api.js";
+import { incomingCallBridge as IncomingCallBridge } from "../incomingCallBridge.js";
 
 let listenersInitialized = false;
 let initializationPromise = null;
@@ -23,10 +17,6 @@ let pendingNotificationTap = null;
 let sessionGeneration = 0;
 
 const registrationTasks = new Map();
-
-// ==========================================
-// NOTIFICATION TAP HANDLING
-// ==========================================
 
 const deliverNotificationTap = (data) => {
   if (!data || typeof data !== "object") return;

@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 import mongoose from "mongoose";
 import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
@@ -12,18 +11,11 @@ const router = Router();
 
 const MAX_PARTICIPANTS = Math.max(
   2,
-  Math.min(
-    Number(config.maxGroupCallParticipants) || 10,
-    10
-  )
+  Math.min(Number(config.maxGroupCallParticipants) || 10, 10)
 );
 
 function getLiveKitClients() {
-  const {
-    livekitUrl,
-    livekitApiKey,
-    livekitApiSecret,
-  } = config;
+  const { livekitUrl, livekitApiKey, livekitApiSecret } = config;
 
   if (!livekitUrl || !livekitApiKey || !livekitApiSecret) {
     throw new Error("LiveKit credentials are not configured.");
@@ -32,31 +24,18 @@ function getLiveKitClients() {
   const host = livekitUrl.replace(/^wss:/i, "https:");
 
   return {
-    roomService: new RoomServiceClient(
-      host,
-      livekitApiKey,
-      livekitApiSecret
-    ),
+    roomService: new RoomServiceClient(host, livekitApiKey, livekitApiSecret),
   };
 }
 
-// POST /api/group-calls/:groupId/token
-//
-// A token is issued only when:
-// 1. The user belongs to the group.
-// 2. The group has an active call.
-// 3. The user is the host or accepted the invitation.
+// A token is issued only to group members who host or have accepted an active call.
 router.post("/:groupId/token", requireAuth, async (req, res) => {
-  try {
+ try {
     const { groupId } = req.params;
     const { callId } = req.body || {};
-
     const userId = String(req.user._id);
 
-    if (
-      !mongoose.isValidObjectId(groupId) ||
-      !mongoose.isValidObjectId(callId)
-    ) {
+    if (!mongoose.isValidObjectId(groupId) || !mongoose.isValidObjectId(callId)) {
       return res.status(400).json({
         message: "Invalid group ID or call ID.",
       });
@@ -86,7 +65,6 @@ router.post("/:groupId/token", requireAuth, async (req, res) => {
     }
 
     const isHost = String(call.host) === userId;
-
     const invitation = call.invitations.find(
       (item) => String(item.user) === userId
     );
@@ -99,8 +77,7 @@ router.post("/:groupId/token", requireAuth, async (req, res) => {
 
     const { roomService } = getLiveKitClients();
 
-    // The start handler is responsible for creating the room.
-    // Never create a room from this token endpoint.
+    // The start handler creates the room before clients request tokens.
     const rooms = await roomService.listRooms([call.roomName]);
 
     if (!rooms.length) {
@@ -109,26 +86,20 @@ router.post("/:groupId/token", requireAuth, async (req, res) => {
       });
     }
 
-    const participants = await roomService.listParticipants(
-      call.roomName
-    );
-
+    const participants = await roomService.listParticipants(call.roomName);
     const alreadyJoined = participants.some(
       (participant) => participant.identity === userId
     );
-    
+
     const maxParticipants = Math.max(
       1,
       Math.min(
-       Number(call.maxParticipants) || MAX_PARTICIPANTS,
+        Number(call.maxParticipants) || MAX_PARTICIPANTS,
         MAX_PARTICIPANTS
       )
     );
-    
-    if (
-      !alreadyJoined &&
-      participants.length >= maxParticipants
-    ) {
+
+    if (!alreadyJoined && participants.length >= maxParticipants) {
       return res.status(409).json({
         message: `This group call is full. Maximum ${maxParticipants} participants.`,
       });
@@ -144,29 +115,26 @@ router.post("/:groupId/token", requireAuth, async (req, res) => {
       }
     );
 
-    accessToken.addGrant({
-      roomJoin: true,
-      room: call.roomName,
-      canPublish: true,
-      canSubscribe: true,
-      canPublishData: true,
-    });
-
+accessToken.addGrant({
+  roomJoin: true,
+  room: call.roomName,
+  canPublish: true,
+  canSubscribe: true,
+  canPublishData: true,
+  canUpdateOwnMetadata: true,
+});
     const participantToken = await accessToken.toJwt();
 
     return res.json({
       serverUrl: config.livekitUrl,
       token: participantToken,
       roomName: call.roomName,
-
       callId: call._id.toString(),
       callType: call.callType,
-
       group: {
         id: group._id.toString(),
         name: group.name,
       },
-
       hostId: String(call.host),
       maxParticipants,
     });

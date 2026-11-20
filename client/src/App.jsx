@@ -1,4 +1,3 @@
-
 import {
   useCallback,
   useEffect,
@@ -13,6 +12,8 @@ import {
   Plus,
 } from "lucide-react";
 
+import { createPortal } from "react-dom";
+
 import AuthScreen from "./components/AuthScreen.jsx";
 import ChatSidebar from "./components/ChatSidebar.jsx";
 import ChatHeader from "./components/ChatHeader.jsx";
@@ -25,11 +26,12 @@ import ChatError from "./components/ChatError.jsx";
 import ConversationBody from "./components/ConversationBody.jsx";
 import ReplyPreview from "./components/ReplyPreview.jsx";
 import NotificationToasts from "./components/NotificationToasts.jsx";
-import CallModal from "./components/CallModal.jsx";
+import CallModal from "./components/CallModal.updated.jsx";
 import MessageRequestsModal from "./components/MessageRequestsModal.jsx";
 import GroupCallModal from "./components/GroupCallModal.jsx";
 import useGroupCall from "./hooks/useGroupCall.js";
 import IncomingGroupCall from "./components/IncomingGroupCall.jsx";
+import ChatDetails from "./components/ChatDetails.jsx";
 import {
   registerPushNotifications,
   unregisterPushNotifications,
@@ -46,12 +48,75 @@ import useChatSocket from "./hooks/useChatSocket.js";
 import useWebRTC from "./hooks/useWebRTC.js";
 import useConversationSettings from "./hooks/useConversationSettings.js";
 import useMessageSocketEvents from "./hooks/useMessageSocketEvents.js";
+import { listenForBubbleNavigation } from "./utils/bubbleNavigation.js";
+function updateGroupCallHistory(chats, call, ended = false) {
+  const groupId = String(call?.groupId?._id ?? call?.groupId?.id ?? call?.groupId ?? "");
+  const callId = String(call?.callId ?? "");
+
+  if (!groupId || !callId) return chats;
+
+  return chats.map((chat) => {
+    if (!chat.isGroup || String(chat.id ?? chat._id) !== groupId) {
+      return chat;
+    }
+
+    const messages = Array.isArray(chat.messages)
+      ? chat.messages
+      : [];
+
+    const existing = messages.find(
+      (message) =>
+        String(message.callId ?? "") === callId &&
+        [
+          "group_call",
+          "group_call_started",
+          "group_call_ended",
+        ].includes(message.type)
+    );
+
+    const startedAt =
+      call.startedAt ??
+      existing?.startedAt ??
+      call.createdAt ??
+      (ended ? null : new Date().toISOString());
+
+    const event = {
+      ...(existing || {}),
+      _id: existing?._id ?? `group-call-${callId}`,
+      type: "group_call",
+      isGroup: true,
+      groupId,
+      callId,
+      callType:
+        call.callType ?? existing?.callType ?? "video",
+      status: ended ? "ended" : "active",
+      startedAt,
+      endedAt: ended
+        ? call.endedAt ?? new Date().toISOString()
+        : existing?.endedAt ?? null,
+      createdAt:
+        existing?.createdAt ??
+        startedAt ??
+        call.endedAt ??
+        new Date().toISOString(),
+    };
+
+    return {
+      ...chat,
+      messages: existing
+        ? messages.map((message) =>
+            message === existing ? event : message
+          )
+        : [...messages, event],
+    };
+  });
+}
 
 export default function App() {
   // =========================
   // 1. USER AND CHAT STATE
   // =========================
-
+  const [callChatPanel, setCallChatPanel] = useState(null);
   const [user, setUser] = useState(null);
 
   const authenticatedUserId = user?.id ?? user?._id ?? user?.userId ?? null;
@@ -65,17 +130,13 @@ export default function App() {
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
 
-  // =========================
-  // 2. MESSAGE REQUEST STATE
-  // =========================
-
   const [newSearch, setNewSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
 
   const [messageRequests, setMessageRequests] = useState([]);
   const [loadingRequests, setLoadingRequests] = useState(false);
   const [showMessageRequests, setShowMessageRequests] = useState(false);
-
+const [showChatDetails, setShowChatDetails] = useState(false);
   // =========================
   // 3. NOTIFICATION STATE
   // =========================
@@ -139,7 +200,7 @@ export default function App() {
   const [savingActiveStatus, setSavingActiveStatus] = useState(false);
 
   const [backgroundPickerOpen, setBackgroundPickerOpen] = useState(false);
-  const [savingBackground, setSavingBackground] = useState(false);
+  const [personalBackgrounds, setPersonalBackgrounds] = useState({});
 
   // =========================
   // 9. CALL STATE
@@ -174,6 +235,7 @@ export default function App() {
 
   const recoveringCallIdsRef = useRef(new Set());
   const handledCallActionsRef = useRef(new Set());
+
   // =========================
   // 11. ACTIVE CHAT
   // =========================
@@ -181,7 +243,27 @@ export default function App() {
   const activeChat = chats.find((chat) =>
     sameId(chat.id, activeId)
   );
+const backgroundKey =
+  authenticatedUserId && activeChat?.id
+    ? `chatterbox:background:${JSON.stringify([
+        String(authenticatedUserId),
+        activeChat.isGroup ? "group" : "private",
+        String(activeChat.id),
+      ])}`
+    : null;
 
+let activeChatBackground = "default";
+
+if (backgroundKey) {
+  try {
+    activeChatBackground =
+      personalBackgrounds[backgroundKey] ??
+      localStorage.getItem(backgroundKey) ??
+      "default";
+  } catch {
+    activeChatBackground = personalBackgrounds[backgroundKey] ?? "default";
+  }
+}
 
   // =========================
   // 12. CUSTOM HOOKS
@@ -374,9 +456,11 @@ useEffect(() => {
   const handleIncomingGroupCall = (call) => {
     console.log("Incoming group call:", call);
 
-    setOngoingGroupCall(call);
+    if (!call?.callId || !call?.groupId) return;
+    setOngoingGroupCall({ ...call, status: "active" });
     setIncomingGroupCall(call);
     setGroupCallStatus("Incoming group call");
+    setChats((previous) => updateGroupCallHistory(previous, call));
   };
 
   // 2. Invitation accepted
@@ -415,23 +499,27 @@ useEffect(() => {
   };
 
   // 6. Host ends the group call
-const handleGroupCallEnded = (data) => {
-  console.log("Group call ended:", data);
-  setOngoingGroupCall(current => current?.callId === data.callId ? null : current);
+ const handleGroupCallEnded = (data) => {
+   console.log("Group call ended:", data);
+   if (!data?.callId || !data?.groupId) return;
 
-  setIncomingGroupCall((current) =>
-    current?.callId === data.callId ? null : current
-  );
+   setChats((previous) => updateGroupCallHistory(previous, data, true));
+   setOngoingGroupCall((current) =>
+     String(current?.callId ?? "") === String(data.callId) ? null : current
+   );
+   setIncomingGroupCall((current) =>
+     String(current?.callId ?? "") === String(data.callId) ? null : current
+   );
 
-  if (activeGroupCall?.callId === data.callId) {
-    leaveGroupCall();
-    setActiveGroupCall(null);
-  }
-
-  setGroupCallStatus("");
-
-  showNotice("The group call has ended.");
-};
+   if (String(activeGroupCall?.callId ?? "") === String(data.callId)) {
+     Promise.resolve()
+       .then(() => leaveGroupCall())
+       .catch((error) => console.error("LiveKit cleanup failed:", error));
+     setActiveGroupCall(null);
+   }
+   setGroupCallStatus("");
+   showNotice("The group call has ended.");
+ };
   // Register listeners
   socket.on("group-call:incoming", handleIncomingGroupCall);
 
@@ -561,24 +649,33 @@ const handleGroupCallEnded = (data) => {
   // 18. END CALL HANDLER
   // =========================
 
-  const handleEndCall = useCallback(() => {
-    if (!activeCall) return;
+const handleEndCall = useCallback(() => {
+  const currentCall = activeCall || incomingCall;
+ 
+  if (!currentCall) return;
 
-    if (socketRef.current) {
-      socketRef.current.emit("call:end", {
-        recipientId: activeCall.recipientId,
-        callId: activeCall.callId,
-      });
-    }
+  if (
+    socketRef.current?.connected &&
+    currentCall.recipientId &&
+    currentCall.callId
+  ) {
+    socketRef.current.emit("call:end", {
+      recipientId: currentCall.recipientId,
+      callId: currentCall.callId,
+    });
+  }
 
-    cleanupCall();
+  cleanupCall();
 
-    setActiveCall(null);
-    setIncomingCall(null);
-    setCallStatus("");
-    setIsMuted(false);
-    setIsCameraOff(false);
-  }, [activeCall, cleanupCall]);
+  setActiveCall(null);
+  setIncomingCall(null);
+  setCallId(null);
+  setCallStatus("");
+  setIsMuted(false);
+  setIsCameraOff(false);
+
+  console.log("Private call ended and cleaned up.");
+}, [activeCall, incomingCall, cleanupCall]);
 
   // =========================
   // 19. CALL SOCKET EVENTS
@@ -820,6 +917,7 @@ const emitGroupCallAck = (currentSocket, eventName, payload) => {
 // 20A. JOIN AN EXISTING GROUP CALL
 // ==========================================
 
+
 const joinExistingGroupCall = async (
   chat,
   call,
@@ -829,38 +927,66 @@ const joinExistingGroupCall = async (
     successMessage = "You joined the ongoing group call.",
   } = {}
 ) => {
+  // STEP 1: Validate call information.
   if (!call?.callId) {
-    throw new Error("Active group call information is missing.");
+    throw new Error(
+      "Active group call information is missing."
+    );
   }
 
   if (!currentSocket?.connected) {
-    throw new Error("Connection unavailable. Please try again.");
+    throw new Error(
+      "Connection unavailable. Please try again."
+    );
   }
 
-  // The backend checks current group membership before joining.
-  if (
-    call.invitationStatus === "not-invited"
-  ) {
-    throw new Error("You are not allowed to join this group call.");
+  if (call.invitationStatus === "not-invited") {
+    throw new Error(
+      "You are not allowed to join this group call."
+    );
   }
 
-  const groupId = call.groupId || chat.id;
-  const callId = call.callId;
-
-  const currentUserId = String(
-    user?.id || user?._id || user?.userId || ""
+  // Normalize MongoDB group IDs.
+  const groupId = String(
+    call.groupId?._id ??
+    call.groupId?.id ??
+    call.groupId ??
+    chat?._id ??
+    chat?.id ??
+    ""
   );
 
-  const hostId = String(call.hostId || "");
+  if (!groupId) {
+    throw new Error("Group ID is missing.");
+  }
+
+  const callId = String(call.callId);
+
+  const currentUserId = String(
+    user?.id ?? user?._id ?? user?.userId ?? ""
+  );
+
+  const hostId = String(
+    call.hostId?._id ??
+    call.hostId?.id ??
+    call.hostId ??
+    ""
+  );
 
   const isHost =
     call.invitationStatus === "host" ||
-    (currentUserId && hostId && currentUserId === hostId);
+    Boolean(
+      currentUserId &&
+      hostId &&
+      currentUserId === hostId
+    );
 
   let serverJoined = false;
 
   try {
-    // STEP 1: Ask the backend to authorize the join.
+    // STEP 2: Authorize joining through backend.
+    setGroupCallStatus("Joining group call...");
+
     const joinResponse = await emitGroupCallAck(
       currentSocket,
       "group-call:join",
@@ -870,9 +996,10 @@ const joinExistingGroupCall = async (
       }
     );
 
-    if (!joinResponse.ok) {
+    if (!joinResponse?.ok) {
       throw new Error(
-        joinResponse.message || "Could not join the group call."
+        joinResponse?.message ||
+        "Could not join the group call."
       );
     }
 
@@ -880,7 +1007,7 @@ const joinExistingGroupCall = async (
 
     const serverCall = joinResponse.call || call;
 
-    // STEP 2: Join the Socket.IO room for call events.
+    // STEP 3: Join Socket.IO call events.
     const socketJoinResponse = await emitGroupCallAck(
       currentSocket,
       "group-call:socket-join",
@@ -890,74 +1017,119 @@ const joinExistingGroupCall = async (
       }
     );
 
-    if (!socketJoinResponse.ok) {
+    if (!socketJoinResponse?.ok) {
       throw new Error(
-        socketJoinResponse.message ||
-          "Could not connect to group call events."
+        socketJoinResponse?.message ||
+        "Could not connect to group call events."
       );
     }
 
-    // STEP 3: Connect to the LiveKit room.
+    if (!currentSocket.connected) {
+      throw new Error(
+        "Socket disconnected while joining the call."
+      );
+    }
+
+    // STEP 4: Connect to LiveKit ONCE.
     setGroupCallStatus("Connecting...");
 
-    await joinGroupCall(chat, callId);
+    const livekitResult = await joinGroupCall(
+      {
+        ...chat,
+        id: groupId,
+      },
+      callId
+    );
 
-    // STEP 4: Save the active call in React state.
-    setActiveGroupCall({
+    if (!livekitResult) {
+      throw new Error(
+        "Group call connection was cancelled. Please try again."
+      );
+    }
+
+    // STEP 5: Save the connected call.
+    const connectedCall = {
       ...serverCall,
       callId,
       groupId,
-      groupName: serverCall.groupName || chat.name,
+      groupName:
+        serverCall.groupName ||
+        chat?.name ||
+        "Group call",
       callType:
-        serverCall.callType || call.callType || "video",
+        serverCall.callType ||
+        call.callType ||
+        "video",
       isHost:
         isHost ||
-        String(serverCall.hostId || "") === currentUserId,
-    });
+        String(
+          serverCall.hostId?._id ??
+          serverCall.hostId?.id ??
+          serverCall.hostId ??
+          ""
+        ) === currentUserId,
+    };
 
-    // STEP 5: Remove the incoming invitation popup.
+    setActiveGroupCall(connectedCall);
+
+    // STEP 6: Dismiss matching invitation.
     setIncomingGroupCall((current) =>
-      current?.callId === callId ? null : current
+      String(current?.callId ?? "") === callId
+        ? null
+        : current
     );
 
     setGroupCallStatus("Connected");
 
     showNotice(successMessage);
 
+    console.log("GROUP CALL JOIN SUCCESS:", {
+      groupId,
+      callId,
+      callType: connectedCall.callType,
+    });
+
     return true;
 
   } catch (error) {
     console.error("GROUP CALL JOIN ERROR:", {
-      callId,
       groupId,
+      callId,
       isHost,
       serverJoined,
       message: error?.message,
       stack: error?.stack,
     });
 
-    // Clean up a failed join on the backend.
+    // STEP 7: Clean up backend participation.
     try {
-      if (endCallOnFailure) {
-        // This is a newly created call.
-        // The host must end it if the host cannot connect.
-        await emitGroupCallAck(
-          currentSocket,
-          "group-call:end",
+      if (currentSocket?.connected) {
+        if (endCallOnFailure) {
+          await emitGroupCallAck(
+            currentSocket,
+            "group-call:end",
+            {
+              groupId,
+              callId,
+            }
+          );
+        } else if (serverJoined && !isHost) {
+          await emitGroupCallAck(
+            currentSocket,
+            "group-call:leave",
+            {
+              groupId,
+              callId,
+            }
+          );
+        }
+      } else {
+        console.warn(
+          "GROUP CALL SERVER CLEANUP SKIPPED:",
           {
             groupId,
             callId,
-          }
-        );
-      } else if (serverJoined && !isHost) {
-        // A regular participant must leave their accepted
-        // invitation if their LiveKit connection fails.
-        await emitGroupCallAck(
-          currentSocket,
-          "group-call:leave",
-          {
-            groupId,
-            callId,
+            reason: "Socket.IO disconnected",
           }
         );
       }
@@ -968,7 +1140,7 @@ const joinExistingGroupCall = async (
       );
     }
 
-    // Always clean up the local LiveKit connection.
+    // STEP 8: Clean up the local LiveKit room.
     try {
       await leaveGroupCall();
     } catch (cleanupError) {
@@ -978,6 +1150,7 @@ const joinExistingGroupCall = async (
       );
     }
 
+    // STEP 9: Reset React call state.
     setActiveGroupCall(null);
     setGroupCallStatus("");
 
@@ -1098,6 +1271,11 @@ const handleStartGroupCall = async (
         "The server did not return a valid call ID."
       );
     }
+
+    setOngoingGroupCall({ ...newCall, groupId: chat.id, status: "active" });
+    setChats((previous) =>
+      updateGroupCallHistory(previous, { ...newCall, groupId: chat.id })
+    );
 
     // STEP 4: Join the newly created call as its host.
     await joinExistingGroupCall(
@@ -1496,51 +1674,74 @@ function openBackgroundPicker(chat) {
 
   setBackgroundPickerOpen(true);
 }
+function handleBackgroundChange(background) {
+  if (!backgroundKey) return;
 
-async function handleBackgroundChange(background) {
-  if (!activeChat || savingBackground) return;
-
-  setSavingBackground(true);
   setError("");
 
   try {
-    if (activeChat.isGroup) {
-      await api.updateGroupBackground(activeChat.id, background);
-
-      setGroups((previous) =>
-        previous.map((group) =>
-          sameId(group.id, activeChat.id)
-            ? { ...group, background }
-            : group
-        )
-      );
-    } else {
-      const recipientId = activeChat.id;
-
-      if (!recipientId) {
-        throw new Error("Recipient ID is missing.");
-      }
-
-      await api.updateConversationBackground(recipientId, background);
-    }
-
-    setChats((previous) =>
-      previous.map((chat) =>
-        sameId(chat.id, activeChat.id)
-          ? { ...chat, background }
-          : chat
-      )
-    );
-
+    localStorage.setItem(backgroundKey, background);
+    setPersonalBackgrounds((previous) => ({
+      ...previous,
+      [backgroundKey]: background,
+    }));
     setBackgroundPickerOpen(false);
-    showNotice("Chat background updated.");
-  } catch (err) {
-    console.error("Background update error:", err);
-    setError(err.message || "Could not update chat background.");
-  } finally {
-    setSavingBackground(false);
+    showNotice("Your chat background was updated.");
+  } catch (error) {
+    console.error("Could not save your chat background:", error);
+    setError("Could not save your chat background on this device.");
   }
 }
+
+useEffect(() => {
+  if (!activeChat?.isGroup) {
+    setOngoingGroupCall(null);
+    return;
+  }
+
+  const groupId = activeChat.id;
+  const currentSocket = socketRef.current;
+
+  if (!currentSocket) return;
+
+  let cancelled = false;
+
+  const checkOngoingCall = async () => {
+    try {
+      if (!currentSocket.connected) return;
+
+      const response = await emitGroupCallAck(
+        currentSocket,
+        "group-call:get-active",
+        { groupId }
+      );
+
+      if (cancelled) return;
+
+      if (response.ok && response.call?.callId) {
+        setOngoingGroupCall({
+          ...response.call,
+          groupId,
+        });
+      } else {
+        setOngoingGroupCall(null);
+      }
+    } catch (error) {
+      if (!cancelled) {
+        console.error("Check ongoing group call:", error);
+      }
+    }
+  };
+
+  checkOngoingCall();
+
+  currentSocket.on("connect", checkOngoingCall);
+
+  return () => {
+    cancelled = true;
+    currentSocket.off("connect", checkOngoingCall);
+  };
+}, [activeChat?.id, activeChat?.isGroup, socket]);
 
 useEffect(() => {
   if (!user) return;
@@ -1688,22 +1889,26 @@ useEffect(() => {
   useEffect(() => {
     let cancelled = false;
 
-    api.me()
-      .then(({ user: current }) => {
-        if (!cancelled) {
-          setUser(current);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setUser(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setCheckingSession(false);
-        }
-      });
+api.me()
+  .then(({ user: current }) => {
+    console.log("SESSION RESTORE SUCCESS:", Boolean(current));
+
+    if (!cancelled) {
+      setUser(current);
+    }
+  })
+  .catch((err) => {
+    console.error("SESSION RESTORE FAILED:", err.message);
+
+    if (!cancelled) {
+      setUser(null);
+    }
+  })
+  .finally(() => {
+    if (!cancelled) {
+      setCheckingSession(false);
+    }
+  });
 
     return () => {
       cancelled = true;
@@ -1714,7 +1919,6 @@ useEffect(() => {
 // =========================
 // 32. LOAD CHATS AND CONNECT SOCKET
 // =========================
-
 useEffect(() => {
   if (!authenticatedUserId) return;
 
@@ -1820,7 +2024,6 @@ useEffect(() => {
     );
   };
 }, [authenticatedUserId]);
-
   // =========================
   // 33. LOAD SELECTED CHAT HISTORY
   // =========================
@@ -1842,11 +2045,29 @@ useEffect(() => {
         if (cancelled) return;
 
         setChats((previous) =>
-          previous.map((chat) =>
-            sameId(chat.id, activeId)
-              ? { ...chat, messages, unread: 0 }
-              : chat
-          )
+          previous.map((chat) => {
+            if (!sameId(chat.id, activeId)) return chat;
+            const fetched = Array.isArray(messages) ? messages : [];
+            if (!chat.isGroup) return { ...chat, messages: fetched, unread: 0 };
+
+            const localCalls = (chat.messages || []).filter(
+              (item) => item.type === "group_call"
+            );
+            const merged = [...fetched];
+            for (const event of localCalls) {
+              const index = merged.findIndex(
+                (item) => String(item.callId ?? "") === String(event.callId)
+              );
+              if (index < 0) merged.push(event);
+              else if (event.status === "ended") {
+                merged[index] = { ...merged[index], ...event };
+              }
+            }
+            merged.sort((a, b) =>
+              new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
+            );
+            return { ...chat, messages: merged, unread: 0 };
+          })
         );
       })
       .catch((err) => {
@@ -2171,7 +2392,51 @@ useEffect(() => {
   };
 }, [handleNotificationTap]);
 
+// ==========================================
+// ANDROID BUBBLE CHAT NAVIGATION
+// ==========================================
 
+useEffect(() => {
+  const stopListening = listenForBubbleNavigation((data) => {
+    if (!data) return;
+
+    console.log("ANDROID BUBBLE OPENED:", data);
+
+    const isGroup =
+      data.type === "group_message" ||
+      Boolean(data.groupId);
+
+    if (isGroup) {
+      if (!data.groupId) return;
+
+      handleNotificationTap({
+        type: "group_message",
+        groupId: data.groupId,
+      });
+
+      return;
+    }
+
+    const senderId = data.senderId;
+
+    if (!senderId) {
+      console.warn("Bubble navigation missing senderId:", data);
+      return;
+    }
+
+    handleNotificationTap({
+      type: "private_message",
+      senderId,
+      conversationId: data.conversationId,
+    });
+  });
+
+  return () => {
+    if (typeof stopListening === "function") {
+      stopListening();
+    }
+  };
+}, [handleNotificationTap]);
 useEffect(() => {
   const pending = pendingNotificationRef.current;
 
@@ -2398,7 +2663,17 @@ async function handleLogout() {
       </div>
     );
   }
+function renderChatContent(content) {
+  const callGroupId = activeGroupCall?.groupId;
+  const isCallGroup =
+    activeChat?.isGroup &&
+    callGroupId &&
+    sameId(activeChat.id, callGroupId);
 
+  return callChatPanel && isCallGroup
+    ? createPortal(content, callChatPanel)
+    : content;
+}
   // =========================
   // 41. AUTHENTICATION SCREEN
   // =========================
@@ -2413,6 +2688,8 @@ async function handleLogout() {
       />
     );
   }
+
+
 
   // =========================
   // 42. MAIN APPLICATION
@@ -2459,13 +2736,15 @@ async function handleLogout() {
           mobileChatOpen ? "chat-panel-mobile-open" : ""
         } ${
           activeChat
-            ? `chat-background-${activeChat.background || "default"}`
+            ? `chat-background-${activeChatBackground}`
             : ""
         }`}
       >
         {activeChat ? (
           <>
             {/* CHAT HEADER */}
+
+
 
 <ChatHeader
   activeChat={activeChat}
@@ -2474,15 +2753,79 @@ async function handleLogout() {
   showNotice={showNotice}
   handleDeleteGroup={handleDeleteGroup}
   onOpenBackgroundPicker={openBackgroundPicker}
-  onStartCall={handleStartCall} 
+  onStartCall={handleStartCall}
   onStartGroupCall={handleStartGroupCall}
   ongoingGroupCall={ongoingGroupCall}
-  onJoinGroupCall={() => handleStartGroupCall(activeChat, ongoingGroupCall?.callType || "audio")}
+  onJoinGroupCall={() => {
+    if (!activeChat?.isGroup) return;
+
+    handleStartGroupCall(
+      activeChat,
+      ongoingGroupCall?.callType || "video"
+    );
+  }}
   callStatus={callStatus}
   groupCallStatus={groupCallStatus}
   messageRequestCount={messageRequests.length}
   setShowMessageRequests={setShowMessageRequests}
+
+  // NEW: Open Chat Information
+  onOpenChatDetails={() => setShowChatDetails(true)}
 />
+
+
+{showChatDetails && activeChat && (
+  <ChatDetails
+    chat={activeChat}
+    online={
+      !activeChat.isGroup &&
+      Boolean(onlineIds?.has(String(activeChat.id)))
+    }
+    onClose={() => setShowChatDetails(false)}
+onAction={async (action, payload) => {
+  const selectedChat = payload?.chat || activeChat;
+
+  if (!selectedChat) return;
+
+  switch (action) {
+    case "theme":
+      setShowChatDetails(false);
+      openBackgroundPicker(selectedChat);
+      break;
+
+    case "open-chat-head":
+      showNotice(
+        "Android chat head integration is not connected yet."
+      );
+      break;
+
+    case "delete-conversation":
+      showNotice(
+        "Conversation deletion requires a backend endpoint."
+      );
+      break;
+
+    case "block-contact":
+      if (selectedChat.isGroup) return;
+
+      showNotice(
+        "Blocking requires a backend endpoint."
+      );
+      break;
+
+    case "report-technical-problem":
+      showNotice(
+        "Technical problem reporting requires a backend endpoint."
+      );
+      break;
+
+    default:
+      console.log("Chat details action:", action, payload);
+  }
+}}
+  />
+)}
+
 
             {/* CHAT ERROR */}
             <ChatError
@@ -2491,24 +2834,67 @@ async function handleLogout() {
             />
 
             {/* MESSAGES */}
-            <ConversationBody
-              activeChat={activeChat}
-              loadingMessages={loadingMessages}
-              user={user}
-              onReply={handleReply}
-              deleteMessage={handleDeleteMessage}
-              editingMessageId={editingMessageId}
-              editDraft={editDraft}
-              savingEdit={savingEdit}
-              setEditDraft={setEditDraft}
-              saveEditedMessage={saveEditedMessage}
-              cancelEditing={cancelEditing}
-              startEditing={startEditing}
-              removeImage={removeImage}
-              bottomRef={bottomRef}
-              mentionSuccessToast={mentionSuccessToast}
-              setMentionSuccessToast={setMentionSuccessToast}
-            />
+
+
+<ConversationBody
+  activeChat={activeChat}
+  loadingMessages={loadingMessages}
+  user={user}
+  onReply={handleReply}
+  deleteMessage={handleDeleteMessage}
+  editingMessageId={editingMessageId}
+  editDraft={editDraft}
+  savingEdit={savingEdit}
+  setEditDraft={setEditDraft}
+  saveEditedMessage={saveEditedMessage}
+  cancelEditing={cancelEditing}
+  startEditing={startEditing}
+  removeImage={removeImage}
+  bottomRef={bottomRef}
+  mentionSuccessToast={mentionSuccessToast}
+  setMentionSuccessToast={setMentionSuccessToast}
+
+  activeGroupCall={activeGroupCall}
+  ongoingGroupCall={ongoingGroupCall}
+
+  onJoinGroupCall={async ({ callId, groupId }) => {
+    if (!callId || !groupId || !activeChat?.isGroup) {
+      throw new Error("Group call information is missing.");
+    }
+
+    const currentSocket = socketRef.current;
+
+    if (!currentSocket?.connected) {
+      throw new Error("Socket connection unavailable.");
+    }
+
+    const response = await emitGroupCallAck(
+      currentSocket,
+      "group-call:get-active",
+      { groupId }
+    );
+
+    if (
+      !response?.ok ||
+      !response.call ||
+      String(response.call.callId) !== String(callId)
+    ) {
+      throw new Error("This group call has already ended.");
+    }
+
+    return joinExistingGroupCall(
+      {
+        ...activeChat,
+        id: groupId,
+      },
+      {
+        ...response.call,
+        groupId,
+      },
+      currentSocket
+    );
+  }}
+/>
 
             {/* REPLY PREVIEW */}
             <ReplyPreview
@@ -2595,11 +2981,8 @@ async function handleLogout() {
       <ChatBackgroundPicker
         isOpen={backgroundPickerOpen}
         onClose={() => setBackgroundPickerOpen(false)}
-        currentBackground={
-          activeChat?.background || "default"
-        }
+        currentBackground={activeChatBackground}
         onSelect={handleBackgroundChange}
-        saving={savingBackground}
       />
 
       {/* CREATE GROUP MODAL */}
@@ -2654,6 +3037,26 @@ async function handleLogout() {
     connectionState={groupCallConnectionState}
     error={groupCallError}
     onClose={handleEndGroupCall}
+    chatPanelRef={setCallChatPanel}
+    onOpenChat={() => {
+      const groupId = activeGroupCall.groupId;
+      const group = groupId
+        ? chatsRef.current.find(
+            (chat) => chat.isGroup && sameId(chat.id, groupId)
+          )
+        : null;
+
+      if (!group) {
+        showNotice("The group chat is still loading. Try again in a moment.");
+        return false;
+      }
+
+      if (!activeChat?.isGroup || !sameId(activeChat.id, groupId)) {
+        selectChat(group);
+      }
+
+      return true;
+    }}
   />
 )}
 

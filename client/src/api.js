@@ -1,11 +1,24 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
-import { normalizeApiUrl } from "./apiConfig.js";
-const native = Capacitor.getPlatform() === "android";
-const bridge = registerPlugin("IncomingCallBridge");
-const getToken = () => native ? localStorage.getItem("chatterbox_native_token") : null;
-const authHeaders = () => native ? { "X-Chatterbox-Native": "android", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) } : {};
-
+import { Capacitor } from "@capacitor/core";
 import { io } from "socket.io-client";
+import { normalizeApiUrl } from "./apiConfig.js";
+import { incomingCallBridge as bridge } from "./incomingCallBridge.js";
+
+const native = Capacitor.getPlatform() === "android";
+
+const getToken = () =>
+  native ? localStorage.getItem("chatterbox_native_token") : null;
+
+const authHeaders = () => {
+  if (!native) return {};
+
+  const token = getToken();
+
+  return {
+    "X-Chatterbox-Native": "android",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
+
 
 // ==========================================
 // API BASE URL
@@ -33,31 +46,29 @@ async function request(path, options = {}) {
   });
 
   const data = await response.json().catch(() => ({}));
-
   if (!response.ok) {
-    console.error("API REQUEST FAILED:", {
-      url,
-      method: options.method || "GET",
-      status: response.status,
-      response: data,
-    });
+    console.error(
+      `API ERROR: ${options.method || "GET"} ${path} STATUS ${response.status}`
+    );
 
     throw new Error(
       data.message || `Request failed with status ${response.status}`
     );
   }
 
-  if (native && data.token && response.ok) {
+  const isLoginOrSignup =
+    path === "/api/auth/login" || path === "/api/auth/signup";
+
+  if (native && isLoginOrSignup && data.token) {
     localStorage.setItem("chatterbox_native_token", data.token);
-    await bridge.configureSession({ token: data.token, apiUrl: API_URL });
+    await bridge.configureSession({
+      token: data.token,
+      apiUrl: API_URL,
+    });
   }
-  if (native && path === "/api/auth/logout" && response.ok) {
-    localStorage.removeItem("chatterbox_native_token");
-    await bridge.configureSession({ token: "", apiUrl: API_URL });
-  }
+
   return data;
 }
-
 // ==========================================
 // API METHODS
 // ==========================================
